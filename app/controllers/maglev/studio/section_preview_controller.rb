@@ -35,29 +35,49 @@ module Maglev
 
       def build_preview_page
         theme = fetch_maglev_theme
-        section_content = build_section_content_for_preview(theme)
 
-        Maglev::Page.new(title: 'Section preview', path: 'index').tap do |page|
-          page.sections = [section_content]
-          page.prepare_sections(theme)
+        Maglev::Page.new(
+          title: 'Section preview',
+          path: 'index',
+          layout_id: theme.default_layout_id || theme.layouts.first&.id
+        )
+      end
+
+      def section_definition
+        @section_definition ||= fetch_maglev_theme.sections.find(params[:slug].to_s).tap do |definition|
+          raise Maglev::Errors::UnknownSection unless definition
         end
       end
 
-      def build_section_content_for_preview(theme)
-        definition = theme.sections.find(params[:slug].to_s)
-        raise Maglev::Errors::UnknownSection unless definition
-
-        definition.build_default_content.with_indifferent_access
+      def fetch_maglev_page_sections(*)
+        @fetch_maglev_page_sections ||= build_maglev_page_sections
       end
 
-      def fetch_maglev_page_sections(*)
-        section_id = fetch_maglev_page.sections.first.fetch('id')
+      def build_maglev_page_sections
+        theme = fetch_maglev_theme
+        layout = theme.find_layout(fetch_maglev_page.layout_id)
+        target_group = layout.groups.find { |group| group.accepts?(section_definition) } || layout.groups.first
+        store = build_preview_store(theme)
 
-        @fetch_maglev_page_sections ||= maglev_services.get_page_sections.call(
-          page: fetch_maglev_page,
-          section_id: section_id,
-          locale: content_locale
-        )
+        layout.groups.map do |group|
+          build_maglev_page_sections_group(group, target_group, store)
+        end
+      end
+
+      def build_preview_store(theme)
+        Maglev::SectionsContentStore.new(handle: 'studio_section_preview').tap do |store|
+          store.sections = [section_definition.build_default_content.with_indifferent_access]
+          store.prepare_sections(theme)
+        end
+      end
+
+      def build_maglev_page_sections_group(group, target_group, store)
+        {
+          id: group.id,
+          handle: group.handle,
+          sections: group.id == target_group.id ? store.sections : [],
+          lock_version: nil
+        }
       end
 
       def maglev_rendering_mode
